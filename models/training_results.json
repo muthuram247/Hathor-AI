@@ -1,0 +1,9 @@
+{
+  "valid_files": 60,
+  "note_events": 17254,
+  "training_sequences_total": 15334,
+  "vocabulary_size": 323,
+  "epochs_completed": 12,
+  "final_training_loss": 3.0292530059814453,
+  "final_validation_loss": 3.3841021060943604
+}
