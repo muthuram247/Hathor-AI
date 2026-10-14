@@ -93,95 +93,208 @@ def generate_music(length, temperature, tempo):
         return path, f"Successfully generated {len(notes)} notes."
     except Exception as exc:
         raise gr.Error(f"Music generation failed: {exc}")
+
+        # ==========================================
+# HATHOR AI — MIDNIGHT STUDIO INTERFACE
+# ==========================================
+
+MIDNIGHT_CSS = """
+.gradio-container {
+    max-width: 1120px !important;
+    margin: auto !important;
+    background: #080d18 !important;
+    color: #f2f7ff !important;
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif !important;
+}
+
+body, .main {
+    background: #080d18 !important;
+}
+
+footer {
+    display: none !important;
+}
+
+#hathor-header {
+    background:
+        radial-gradient(ellipse at top, #18314c 0%, transparent 70%),
+        #0b1220;
+    border: 1px solid #263950;
+    border-radius: 24px;
+    padding: 30px 24px;
+    margin: 8px 0 22px;
+    text-align: center;
+}
+
+#hathor-brand {
+    color: #55e5ef;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 4px;
+    margin-bottom: 16px;
+}
+
+#hathor-header h1 {
+    color: #f2f7ff;
+    font-size: clamp(34px, 6vw, 58px);
+    line-height: 1.1;
+    letter-spacing: -2px;
+    margin: 0 0 14px;
+}
+
+#hathor-header h1 span {
+    color: #55e5ef;
+}
+
+#hathor-header p {
+    max-width: 590px;
+    margin: auto;
+    color: #a5b7d0;
+    font-size: 15px;
+    line-height: 1.8;
+}
+
+#hathor-wave {
+    color: #55e5ef;
+    letter-spacing: 5px;
+    font-size: 23px;
+    margin-top: 20px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.hathor-panel {
+    background: #101a2b !important;
+    border: 1px solid #263950 !important;
+    border-radius: 20px !important;
+    padding: 22px !important;
+}
+
+.hathor-heading {
+    color: #f2f7ff;
+    font-size: 21px;
+    font-weight: 750;
+    margin-bottom: 8px;
+}
+
+.hathor-description {
+    color: #9aacc4;
+    font-size: 13px;
+    line-height: 1.7;
+    margin-bottom: 20px;
+}
+
+.hathor-footer {
+    text-align: center;
+    color: #8294ac;
+    font-size: 12px;
+    line-height: 1.9;
+    padding: 24px 8px 12px;
+}
+
+#generate-btn {
+    background: #55e5ef !important;
+    color: #07111d !important;
+    border: none !important;
+    border-radius: 12px !important;
+    min-height: 54px !important;
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    transition: transform .15s ease;
+}
+
+#generate-btn:hover {
+    filter: brightness(1.08);
+}
+
+button, input, textarea {
+    border-radius: 10px !important;
+}
+
+label, .label-wrap span {
+    color: #dce8f8 !important;
+}
+
+input[type="range"] {
+    accent-color: #55e5ef !important;
+}
+
+#result-file {
+    border: 1px dashed #38516d !important;
+    border-radius: 14px !important;
+    background: #0b1423 !important;
+}
+
+#status-box textarea {
+    color: #b6c8df !important;
+    background: #0b1423 !important;
+    border: 1px solid #263950 !important;
+}
+
+@media (max-width: 640px) {
+    .gradio-container {
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+    }
+
+    #hathor-header {
+        padding: 26px 16px;
+        border-radius: 18px;
+    }
+
+    #hathor-header h1 {
+        font-size: 37px;
+        letter-spacing: -1.4px;
+    }
+
+    #hathor-header p {
+        font-size: 14px;
+    }
+
+    .hathor-panel {
+        padding: 17px !important;
+    }
+}
+"""
+
 with gr.Blocks(
-    title="Hathor AI | Music Studio",
-    theme=gr.themes.Soft(
+    title="Hathor AI | Midnight Studio",
+    theme=gr.themes.Base(
         primary_hue="cyan",
         secondary_hue="blue",
         neutral_hue="slate"
     ),
-    css="""
-    .gradio-container {
-        max-width: 1050px !important;
-        margin: auto !important;
-        background: #080d18 !important;
-    }
-
-    #hero {
-        text-align: center;
-        padding: 46px 20px 32px;
-        border: 1px solid #25354b;
-        border-radius: 22px;
-        background: linear-gradient(135deg, #101d32, #0a1020);
-        margin-bottom: 22px;
-    }
-
-    #hero h1 {
-        font-size: clamp(36px, 7vw, 60px);
-        font-weight: 800;
-        letter-spacing: -2px;
-        margin: 12px 0;
-        color: #f1f7ff;
-    }
-
-    #hero p {
-        color: #a9bbd2;
-        font-size: 16px;
-        line-height: 1.7;
-    }
-
-    .eyebrow {
-        color: #54e5ef;
-        font-size: 12px;
-        font-weight: bold;
-        letter-spacing: 3px;
-    }
-
-    .panel {
-        border: 1px solid #25354b !important;
-        border-radius: 18px !important;
-        padding: 22px !important;
-        background: #101827 !important;
-    }
-
-    #generate-btn {
-        border-radius: 12px !important;
-        min-height: 54px !important;
-        font-weight: bold !important;
-        font-size: 16px !important;
-    }
-
-    #footer {
-        text-align: center;
-        color: #8091a8;
-        font-size: 12px;
-        padding: 22px 8px;
-    }
-
-    footer {
-        display: none !important;
-    }
-    """
+    css=MIDNIGHT_CSS
 ) as demo:
 
     gr.HTML("""
-    <div id="hero">
-        <div class="eyebrow">HATHOR AI · MUSIC INTELLIGENCE</div>
-        <h1>Make room for <span style="color:#54e5ef">music.</span></h1>
+    <header id="hathor-header">
+        <div id="hathor-brand">♫ HATHOR AI · MUSIC STUDIO</div>
+        <h1>Make room for <span>music.</span></h1>
         <p>
-            An experimental AI music studio powered by an LSTM neural network.
-            Create original piano sequences, shape their feel, and export MIDI.
+            Turn neural patterns into musical ideas.
+            Create original piano sequences with your AI music model
+            and export your compositions as MIDI.
         </p>
-    </div>
+        <div id="hathor-wave" aria-hidden="true">
+            ▁ ▃ ▅ ▂ ▇ ▄ ▆ ▂ ▅ ▇ ▃ ▆ ▂ ▄ ▇ ▃ ▁
+        </div>
+    </header>
     """)
 
-    with gr.Row():
-        with gr.Column(scale=3):
-            with gr.Group(elem_classes="panel"):
-                gr.Markdown("## 🎹 Create your melody")
-                gr.Markdown(
-                    "Adjust the controls below, then generate a new composition."
-                )
+    with gr.Row(equal_height=False):
+
+        with gr.Column(scale=6):
+            with gr.Group(elem_classes=["hathor-panel"]):
+                gr.HTML("""
+                <div class="hathor-heading">
+                    ✦ Create your melody
+                </div>
+                <div class="hathor-description">
+                    Shape the length and creativity of your next composition.
+                    Adjust the settings and generate a new MIDI file.
+                </div>
+                """)
 
                 length = gr.Slider(
                     minimum=32,
@@ -189,7 +302,7 @@ with gr.Blocks(
                     value=120,
                     step=8,
                     label="Melody length",
-                    info="More notes create a longer sequence."
+                    info="Number of generated note events"
                 )
 
                 temperature = gr.Slider(
@@ -199,7 +312,7 @@ with gr.Blocks(
                     step=0.1,
                     label="Creativity",
                     info="Lower values are more predictable; "
-                         "higher values are more varied."
+                         "higher values are more varied"
                 )
 
                 tempo = gr.Slider(
@@ -208,7 +321,7 @@ with gr.Blocks(
                     value=110,
                     step=5,
                     label="Tempo (BPM)",
-                    info="Choose how fast the melody plays."
+                    info="Playback speed for your composition"
                 )
 
                 generate = gr.Button(
@@ -217,35 +330,40 @@ with gr.Blocks(
                     elem_id="generate-btn"
                 )
 
-        with gr.Column(scale=2):
-            with gr.Group(elem_classes="panel"):
-                gr.Markdown("## Your composition")
-                gr.Markdown(
-                    "Your generated MIDI file will appear here. "
-                    "Download it and open it in a MIDI-compatible "
-                    "music player or digital audio workstation."
-                )
+        with gr.Column(scale=5):
+            with gr.Group(elem_classes=["hathor-panel"]):
+                gr.HTML("""
+                <div class="hathor-heading">
+                    Your composition
+                </div>
+                <div class="hathor-description">
+                    When generation finishes, download your MIDI file
+                    and open it in a compatible music player or DAW.
+                </div>
+                """)
 
                 result = gr.File(
                     label="Generated MIDI file",
+                    elem_id="result-file",
                     interactive=False
                 )
 
                 status = gr.Textbox(
-                    label="Generation status",
-                    value="Ready to create.",
+                    label="Studio status",
+                    value="Ready to create your first melody.",
+                    lines=3,
                     interactive=False,
-                    lines=2
+                    elem_id="status-box"
                 )
 
                 gr.Markdown(
-                    "**File format:** MIDI (.mid)  \n"
-                    "**Instrument:** Acoustic Grand Piano"
+                    "**FORMAT** · MIDI (.mid)  \n"
+                    "**INSTRUMENT** · Acoustic Grand Piano"
                 )
 
     gr.HTML("""
-    <div id="footer">
-        HATHOR AI · From neural patterns to musical ideas<br>
+    <div class="hathor-footer">
+        HATHOR AI · FROM NEURAL PATTERNS TO MUSICAL IDEAS<br>
         An experimental AI music-generation project
     </div>
     """)
@@ -260,4 +378,4 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", "10000"))
-                )
+    )
