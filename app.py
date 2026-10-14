@@ -93,32 +93,162 @@ def generate_music(length, temperature, tempo):
         return path, f"Successfully generated {len(notes)} notes."
     except Exception as exc:
         raise gr.Error(f"Music generation failed: {exc}")
+with gr.Blocks(
+    title="Hathor AI | Music Studio",
+    theme=gr.themes.Soft(
+        primary_hue="cyan",
+        secondary_hue="blue",
+        neutral_hue="slate"
+    ),
+    css="""
+    .gradio-container {
+        max-width: 1050px !important;
+        margin: auto !important;
+        background: #080d18 !important;
+    }
 
-with gr.Blocks(title="Hathor AI") as demo:
-    gr.Markdown("# Hathor AI")
-    gr.Markdown("### Unleash Your Own Music")
-    gr.Markdown(
-        "Generate a new piano melody using an LSTM trained on classical MIDI music. "
-        "Adjust the settings, generate a melody, and download the MIDI file."
-    )
+    #hero {
+        text-align: center;
+        padding: 46px 20px 32px;
+        border: 1px solid #25354b;
+        border-radius: 22px;
+        background: linear-gradient(135deg, #101d32, #0a1020);
+        margin-bottom: 22px;
+    }
+
+    #hero h1 {
+        font-size: clamp(36px, 7vw, 60px);
+        font-weight: 800;
+        letter-spacing: -2px;
+        margin: 12px 0;
+        color: #f1f7ff;
+    }
+
+    #hero p {
+        color: #a9bbd2;
+        font-size: 16px;
+        line-height: 1.7;
+    }
+
+    .eyebrow {
+        color: #54e5ef;
+        font-size: 12px;
+        font-weight: bold;
+        letter-spacing: 3px;
+    }
+
+    .panel {
+        border: 1px solid #25354b !important;
+        border-radius: 18px !important;
+        padding: 22px !important;
+        background: #101827 !important;
+    }
+
+    #generate-btn {
+        border-radius: 12px !important;
+        min-height: 54px !important;
+        font-weight: bold !important;
+        font-size: 16px !important;
+    }
+
+    #footer {
+        text-align: center;
+        color: #8091a8;
+        font-size: 12px;
+        padding: 22px 8px;
+    }
+
+    footer {
+        display: none !important;
+    }
+    """
+) as demo:
+
+    gr.HTML("""
+    <div id="hero">
+        <div class="eyebrow">HATHOR AI · MUSIC INTELLIGENCE</div>
+        <h1>Make room for <span style="color:#54e5ef">music.</span></h1>
+        <p>
+            An experimental AI music studio powered by an LSTM neural network.
+            Create original piano sequences, shape their feel, and export MIDI.
+        </p>
+    </div>
+    """)
 
     with gr.Row():
-        length = gr.Slider(
-            minimum=32, maximum=240, value=120, step=8,
-            label="Generation length (notes)"
-        )
-        temperature = gr.Slider(
-            minimum=0.3, maximum=1.5, value=0.9, step=0.1,
-            label="Creativity (temperature)"
-        )
+        with gr.Column(scale=3):
+            with gr.Group(elem_classes="panel"):
+                gr.Markdown("## 🎹 Create your melody")
+                gr.Markdown(
+                    "Adjust the controls below, then generate a new composition."
+                )
 
-    tempo = gr.Slider(
-        minimum=60, maximum=180, value=110, step=5,
-        label="Tempo (BPM)"
-    )
-    generate = gr.Button("Generate Music", variant="primary")
-    result = gr.File(label="Download your MIDI melody")
-    status = gr.Textbox(label="Status", interactive=False)
+                length = gr.Slider(
+                    minimum=32,
+                    maximum=240,
+                    value=120,
+                    step=8,
+                    label="Melody length",
+                    info="More notes create a longer sequence."
+                )
+
+                temperature = gr.Slider(
+                    minimum=0.3,
+                    maximum=1.5,
+                    value=0.9,
+                    step=0.1,
+                    label="Creativity",
+                    info="Lower values are more predictable; "
+                         "higher values are more varied."
+                )
+
+                tempo = gr.Slider(
+                    minimum=60,
+                    maximum=180,
+                    value=110,
+                    step=5,
+                    label="Tempo (BPM)",
+                    info="Choose how fast the melody plays."
+                )
+
+                generate = gr.Button(
+                    "✦  Generate Music",
+                    variant="primary",
+                    elem_id="generate-btn"
+                )
+
+        with gr.Column(scale=2):
+            with gr.Group(elem_classes="panel"):
+                gr.Markdown("## Your composition")
+                gr.Markdown(
+                    "Your generated MIDI file will appear here. "
+                    "Download it and open it in a MIDI-compatible "
+                    "music player or digital audio workstation."
+                )
+
+                result = gr.File(
+                    label="Generated MIDI file",
+                    interactive=False
+                )
+
+                status = gr.Textbox(
+                    label="Generation status",
+                    value="Ready to create.",
+                    interactive=False,
+                    lines=2
+                )
+
+                gr.Markdown(
+                    "**File format:** MIDI (.mid)  \n"
+                    "**Instrument:** Acoustic Grand Piano"
+                )
+
+    gr.HTML("""
+    <div id="footer">
+        HATHOR AI · From neural patterns to musical ideas<br>
+        An experimental AI music-generation project
+    </div>
+    """)
 
     generate.click(
         fn=generate_music,
@@ -130,4 +260,4 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", "10000"))
-    )
+                )
