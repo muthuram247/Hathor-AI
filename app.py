@@ -234,7 +234,8 @@ def generate_music(
     history_items
 ):
     try:
-        notes = generate_tokens(int(length), float(temperature))
+notes = generate_tokens(int(length), float(temperature))
+notes = clean_notes(notes, float(tempo))
 
         midi, midi_path = create_midi(
             notes,
