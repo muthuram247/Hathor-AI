@@ -95,10 +95,13 @@ def create_midi(notes, tempo, instrument_name):
         if not 0 <= duration_idx < len(DURATION_BINS):
             raise ValueError("Generated duration index is invalid.")
 
-        duration = max(
-            0.08,
-            min(float(DURATION_BINS[duration_idx]), 2.5)
-        )
+        
+seconds_per_beat = 60.0 / float(tempo)
+
+duration = float(DURATION_BINS[duration_idx])
+duration = float(np.clip(duration, 0.25, 1.0))
+duration *= seconds_per_beat
+
 
         note = pretty_midi.Note(
             velocity=90,
@@ -186,112 +189,6 @@ def instrument_waveform(phase, instrument_name):
         + 0.30 * np.sin(2 * phase)
         + 0.12 * np.sin(3 * phase)
     ) / 1.42
-
-
-def make_audio_preview(notes, tempo, instrument_name, audio_path):
-    """
-    Produce a lightweight WAV preview with a basic
-    synthesized tone. This is not a sampled instrument library.
-    """
-
-    sample_rate = 22050
-    seconds_per_beat = 60.0 / float(tempo)
-
-    # The training duration bins represent note durations
-    # in beats for this preview.
-    durations = []
-
-    for _, duration_idx in notes:
-        duration_idx = int(duration_idx)
-
-        if not 0 <= duration_idx < len(DURATION_BINS):
-            raise ValueError("Generated duration index is invalid.")
-
-        beats = max(
-            0.08,
-            min(float(DURATION_BINS[duration_idx]), 2.5)
-        )
-
-        durations.append(beats * seconds_per_beat)
-
-    total_seconds = sum(durations) + 0.2
-
-    # Prevent accidental creation of excessively large WAV files.
-    total_seconds = min(total_seconds, 180.0)
-    total_samples = int(total_seconds * sample_rate)
-
-    audio = np.zeros(total_samples, dtype=np.float32)
-    current_time = 0.0
-
-    for (pitch, _), duration in zip(notes, durations):
-        if current_time >= total_seconds:
-            break
-
-        duration = min(duration, total_seconds - current_time)
-        note_samples = int(duration * sample_rate)
-
-        if note_samples < 2:
-            current_time += duration
-            continue
-
-        start = int(current_time * sample_rate)
-        end = min(start + note_samples, total_samples)
-        note_samples = end - start
-
-        if note_samples < 2:
-            break
-
-        frequency = 440.0 * (
-            2.0 ** ((int(pitch) - 69) / 12.0)
-        )
-
-        time_axis = np.arange(note_samples) / sample_rate
-        phase = 2.0 * np.pi * frequency * time_axis
-
-        tone = instrument_waveform(phase, instrument_name)
-
-        # Simple attack and release envelope.
-        attack_samples = min(
-            int(0.015 * sample_rate),
-            note_samples // 3
-        )
-        release_samples = min(
-            int(0.06 * sample_rate),
-            note_samples // 3
-        )
-
-        envelope = np.ones(note_samples, dtype=np.float32)
-
-        if attack_samples > 0:
-            envelope[:attack_samples] = np.linspace(
-                0.0, 1.0, attack_samples, endpoint=False
-            )
-
-        if release_samples > 0:
-            envelope[-release_samples:] = np.linspace(
-                1.0, 0.0, release_samples
-            )
-
-        audio[start:end] += (
-            tone[:note_samples] * envelope
-        ).astype(np.float32)
-
-        current_time += duration
-
-    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-
-    if peak > 0:
-        audio = audio / peak * 0.85
-
-    pcm = (audio * 32767).astype(np.int16)
-
-    with wave.open(str(audio_path), "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(pcm.tobytes())
-
-    return str(audio_path)
 
 
 # ==========================================
@@ -413,6 +310,91 @@ def load_history(label, history_items):
         None,
         "Choose a composition from your generation history."
     )
+
+def make_audio_preview(notes, tempo, instrument_name, audio_path):
+    """Create a cleaner, piano-like synthesized WAV preview."""
+
+    sample_rate = 22050
+    seconds_per_beat = 60.0 / float(tempo)
+
+    events = []
+    current_time = 0.0
+
+    for pitch, duration_idx in notes:
+        duration_idx = int(duration_idx)
+
+        if not 0 <= duration_idx < len(DURATION_BINS):
+            continue
+
+        duration_beats = float(DURATION_BINS[duration_idx])
+        duration_beats = float(np.clip(duration_beats, 0.25, 1.0))
+        duration = duration_beats * seconds_per_beat
+
+        pitch = int(np.clip(int(pitch), 0, 127))
+
+        events.append((pitch, current_time, duration))
+        current_time += duration
+
+    total_seconds = min(current_time + 0.5, 180.0)
+    total_samples = max(1, int(total_seconds * sample_rate))
+    audio = np.zeros(total_samples, dtype=np.float64)
+
+    for pitch, start_time, duration in events:
+        if start_time >= total_seconds:
+            break
+
+        start = int(start_time * sample_rate)
+        note_samples = min(
+            int(duration * sample_rate),
+            total_samples - start
+        )
+
+        if note_samples <= 2:
+            continue
+
+        t = np.arange(note_samples) / sample_rate
+        frequency = 440.0 * (2.0 ** ((pitch - 69) / 12.0))
+        phase = 2.0 * np.pi * frequency * t
+
+        # A brighter piano-like tone with a decaying sound.
+        tone = (
+            1.00 * np.sin(phase)
+            + 0.42 * np.sin(2.0 * phase)
+            + 0.18 * np.sin(3.0 * phase)
+            + 0.08 * np.sin(4.0 * phase)
+        )
+
+        # Fast attack, gradual decay, and gentle release.
+        attack = min(int(0.012 * sample_rate), note_samples // 3)
+        release = min(int(0.07 * sample_rate), note_samples // 3)
+
+        envelope = np.exp(-3.0 * t / max(duration, 0.1))
+
+        if attack > 1:
+            envelope[:attack] *= np.linspace(0, 1, attack)
+
+        if release > 1:
+            envelope[-release:] *= np.linspace(1, 0, release)
+
+        audio[start:start + note_samples] += (
+            tone * envelope * 0.22
+        )
+
+    # Prevent clipping without making quiet notes unnaturally loud.
+    peak = np.max(np.abs(audio))
+
+    if peak > 0:
+        audio = audio / max(1.0, peak / 0.90)
+
+    pcm = (audio * 32767).astype(np.int16)
+
+    with wave.open(str(audio_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm.tobytes())
+
+    return str(audio_path)
 
 
 # ==========================================
