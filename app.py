@@ -28,6 +28,10 @@ AUDIO_DIR = BASE / "outputs" / "audio"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
+# The duration calculations below assume DURATION_BINS are measured in beats.
+# Your existing audio-preview code used this interpretation. Confirm it against
+# the preprocessing/training code for the ORIGINAL model before deploying.
+DURATION_BINS_ARE_BEATS = True
 
 with open(VOCAB_PATH, encoding="utf-8") as f:
     vocabulary = json.load(f)
@@ -39,6 +43,10 @@ with np.load(DATA_PATH, allow_pickle=False) as data:
     X = data["X"]
     sequence_length = int(data["sequence_length"][0])
 
+if len(X) == 0:
+    raise ValueError(f"No training sequences were found in {DATA_PATH}")
+if not DURATION_BINS:
+    raise ValueError(f"No duration bins were found in {DURATION_PATH}")
 
 # Load the trained model once when the service starts.
 model = tf.keras.models.load_model(MODEL_PATH, compile=False)
@@ -56,8 +64,11 @@ def sample_next_token(probabilities, temperature):
     logits -= np.max(logits)
 
     scaled = np.exp(logits)
-    scaled /= scaled.sum()
+    total = scaled.sum()
+    if not np.isfinite(total) or total <= 0:
+        return int(np.argmax(probabilities))
 
+    scaled /= total
     return int(np.random.choice(len(scaled), p=scaled))
 
 
@@ -78,6 +89,26 @@ def generate_tokens(length, temperature):
 
 
 # ==========================================
+# DURATION HELPERS
+# ==========================================
+
+def get_note_duration_seconds(duration_idx, tempo):
+    """Convert the model's duration-bin value to seconds, assuming beats."""
+    duration_idx = int(duration_idx)
+    if not 0 <= duration_idx < len(DURATION_BINS):
+        raise ValueError("Generated duration index is invalid.")
+
+    duration_value = float(DURATION_BINS[duration_idx])
+    duration_value = float(np.clip(duration_value, 0.25, 1.0))
+
+    if DURATION_BINS_ARE_BEATS:
+        return duration_value * (60.0 / float(tempo))
+
+    # Use this branch only if your ORIGINAL training data stores seconds.
+    return duration_value
+
+
+# ==========================================
 # MIDI EXPORT WITH SELECTABLE INSTRUMENT
 # ==========================================
 
@@ -90,47 +121,31 @@ def create_midi(notes, tempo, instrument_name):
     current_time = 0.0
 
     for pitch, duration_idx in notes:
-        duration_idx = int(duration_idx)
-
-        if not 0 <= duration_idx < len(DURATION_BINS):
-            raise ValueError("Generated duration index is invalid.")
-
-        
-seconds_per_beat = 60.0 / float(tempo)
-
-duration = float(DURATION_BINS[duration_idx])
-duration = float(np.clip(duration, 0.25, 1.0))
-duration *= seconds_per_beat
-
+        duration = get_note_duration_seconds(duration_idx, tempo)
+        safe_pitch = int(np.clip(int(pitch), 0, 127))
 
         note = pretty_midi.Note(
             velocity=90,
-            pitch=int(np.clip(pitch, 0, 127)),
+            pitch=safe_pitch,
             start=current_time,
-            end=current_time + duration
+            end=current_time + max(duration, 0.05),
         )
 
         instrument.notes.append(note)
-        current_time += duration
+        current_time += max(duration, 0.05)
 
     midi.instruments.append(instrument)
 
     stamp = int(time.time())
     unique_id = random.randrange(100000)
-
-    output_path = OUTPUT_DIR / (
-        f"hathor_{stamp}_{unique_id}.mid"
-    )
+    output_path = OUTPUT_DIR / f"hathor_{stamp}_{unique_id}.mid"
 
     midi.write(str(output_path))
 
     # Validate the exported MIDI.
     check = pretty_midi.PrettyMIDI(str(output_path))
-
     if not check.instruments or not check.instruments[0].notes:
-        raise RuntimeError(
-            "The generated MIDI file could not be validated."
-        )
+        raise RuntimeError("The generated MIDI file could not be validated.")
 
     return midi, str(output_path)
 
@@ -140,18 +155,11 @@ duration *= seconds_per_beat
 # ==========================================
 
 def instrument_waveform(phase, instrument_name):
-    """
-    Create simple, distinct preview timbres without
-    requiring an external synthesizer installation.
-    """
-
+    """Create simple synthetic tones without an external synthesizer."""
     name = instrument_name.lower()
 
     if "flute" in name:
-        return (
-            np.sin(phase)
-            + 0.12 * np.sin(2 * phase)
-        ) / 1.12
+        return (np.sin(phase) + 0.12 * np.sin(2 * phase)) / 1.12
 
     if "violin" in name or "cello" in name or "strings" in name:
         return (
@@ -191,18 +199,9 @@ def instrument_waveform(phase, instrument_name):
     ) / 1.42
 
 
-# ==========================================
-# GENERATE MUSIC + UPDATE SESSION HISTORY
-# ==========================================
-
 def clean_notes(notes, tempo):
-    """Improve pitch range and timing before playback and export."""
-
-    beat = 60.0 / float(tempo)
-    grid = beat / 2.0  # Eighth-note grid
+    """Move generated pitches into a practical lead-melody register."""
     cleaned = []
-
-    current_time = 0.0
 
     for pitch, duration_idx in notes:
         pitch = int(pitch)
@@ -211,128 +210,26 @@ def clean_notes(notes, tempo):
         if not 0 <= duration_idx < len(DURATION_BINS):
             continue
 
-        # Raise the melody one octave, avoiding extreme high notes.
+        # Raise the generated melody by one octave and limit extreme pitches.
         pitch = int(np.clip(pitch + 12, 48, 96))
-
-        # Treat learned duration bins as beats.
-        duration_beats = float(DURATION_BINS[duration_idx])
-        duration_beats = float(np.clip(duration_beats, 0.25, 1.0))
-
-        # Snap note starts to a regular rhythmic grid.
-        current_time = round(current_time / grid) * grid
-
         cleaned.append((pitch, duration_idx))
-        current_time += duration_beats * beat
 
     return cleaned
 
-def generate_music(
-    length,
-    temperature,
-    tempo,
-    instrument_name,
-    history_items
-):
-    try:
-notes = generate_tokens(int(length), float(temperature))
-notes = clean_notes(notes, float(tempo))
-
-        midi, midi_path = create_midi(
-            notes,
-            float(tempo),
-            instrument_name
-        )
-
-        audio_name = Path(midi_path).with_suffix(".wav").name
-        audio_path = AUDIO_DIR / audio_name
-
-        make_audio_preview(
-            notes,
-            float(tempo),
-            instrument_name,
-            audio_path
-        )
-
-        label = (
-            f"{datetime.now().strftime('%H:%M:%S')} · "
-            f"{instrument_name} · {len(notes)} notes"
-        )
-
-        history_items = list(history_items or [])
-
-        history_items.insert(0, {
-            "label": label,
-            "midi": midi_path,
-            "audio": str(audio_path),
-            "status": (
-                f"Generated {len(notes)} notes using "
-                f"{instrument_name} at {int(tempo)} BPM."
-            )
-        })
-
-        # Keep the most recent 10 generations for this session.
-        history_items = history_items[:10]
-
-        history_choices = [
-            item["label"] for item in history_items
-        ]
-
-        return (
-            midi_path,
-            str(audio_path),
-            (
-                f"Composition ready.\n"
-                f"Instrument: {instrument_name}\n"
-                f"Notes: {len(notes)}\n"
-                f"Tempo: {int(tempo)} BPM"
-            ),
-            history_items,
-            gr.update(
-                choices=history_choices,
-                value=label
-            )
-        )
-
-    except Exception as exc:
-        raise gr.Error(f"Music generation failed: {exc}")
-
-
-def load_history(label, history_items):
-    for item in history_items or []:
-        if item["label"] == label:
-            return (
-                item["midi"],
-                item["audio"],
-                item["status"]
-            )
-
-    return (
-        None,
-        None,
-        "Choose a composition from your generation history."
-    )
 
 def make_audio_preview(notes, tempo, instrument_name, audio_path):
-    """Create a cleaner, piano-like synthesized WAV preview."""
-
+    """Create a WAV preview with the selected synthetic instrument tone."""
     sample_rate = 22050
-    seconds_per_beat = 60.0 / float(tempo)
-
     events = []
     current_time = 0.0
 
     for pitch, duration_idx in notes:
-        duration_idx = int(duration_idx)
-
-        if not 0 <= duration_idx < len(DURATION_BINS):
+        try:
+            duration = get_note_duration_seconds(duration_idx, tempo)
+        except (TypeError, ValueError):
             continue
 
-        duration_beats = float(DURATION_BINS[duration_idx])
-        duration_beats = float(np.clip(duration_beats, 0.25, 1.0))
-        duration = duration_beats * seconds_per_beat
-
         pitch = int(np.clip(int(pitch), 0, 127))
-
         events.append((pitch, current_time, duration))
         current_time += duration
 
@@ -345,49 +242,44 @@ def make_audio_preview(notes, tempo, instrument_name, audio_path):
             break
 
         start = int(start_time * sample_rate)
-        note_samples = min(
-            int(duration * sample_rate),
-            total_samples - start
-        )
+        if start >= total_samples:
+            break
 
+        note_samples = min(
+            max(1, int(duration * sample_rate)),
+            total_samples - start,
+        )
         if note_samples <= 2:
             continue
 
-        t = np.arange(note_samples) / sample_rate
+        t = np.arange(note_samples, dtype=np.float64) / sample_rate
         frequency = 440.0 * (2.0 ** ((pitch - 69) / 12.0))
         phase = 2.0 * np.pi * frequency * t
 
-        # A brighter piano-like tone with a decaying sound.
-        tone = (
-            1.00 * np.sin(phase)
-            + 0.42 * np.sin(2.0 * phase)
-            + 0.18 * np.sin(3.0 * phase)
-            + 0.08 * np.sin(4.0 * phase)
-        )
+        # Use the selected instrument's synthetic tone.
+        tone = instrument_waveform(phase, instrument_name)
 
         # Fast attack, gradual decay, and gentle release.
         attack = min(int(0.012 * sample_rate), note_samples // 3)
         release = min(int(0.07 * sample_rate), note_samples // 3)
-
         envelope = np.exp(-3.0 * t / max(duration, 0.1))
 
         if attack > 1:
-            envelope[:attack] *= np.linspace(0, 1, attack)
-
+            envelope[:attack] *= np.linspace(0.0, 1.0, attack)
         if release > 1:
-            envelope[-release:] *= np.linspace(1, 0, release)
+            envelope[-release:] *= np.linspace(1.0, 0.0, release)
 
-        audio[start:start + note_samples] += (
-            tone * envelope * 0.22
-        )
+        end = start + note_samples
+        audio[start:end] += tone * envelope * 0.22
 
-    # Prevent clipping without making quiet notes unnaturally loud.
-    peak = np.max(np.abs(audio))
-
+    # Limit peaks while preserving the natural volume differences between notes.
+    peak = float(np.max(np.abs(audio)))
     if peak > 0:
-        audio = audio / max(1.0, peak / 0.90)
+        audio = audio * min(1.0, 0.90 / peak)
 
     pcm = (audio * 32767).astype(np.int16)
+    audio_path = Path(audio_path)
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
 
     with wave.open(str(audio_path), "wb") as wav_file:
         wav_file.setnchannels(1)
@@ -396,6 +288,79 @@ def make_audio_preview(notes, tempo, instrument_name, audio_path):
         wav_file.writeframes(pcm.tobytes())
 
     return str(audio_path)
+
+
+# ==========================================
+# GENERATE MUSIC + UPDATE SESSION HISTORY
+# ==========================================
+
+def generate_music(length, temperature, tempo, instrument_name, history_items):
+    try:
+        notes = generate_tokens(int(length), float(temperature))
+        notes = clean_notes(notes, float(tempo))
+
+        if not notes:
+            raise ValueError("The model did not generate any valid notes.")
+
+        midi, midi_path = create_midi(notes, float(tempo), instrument_name)
+
+        audio_name = Path(midi_path).with_suffix(".wav").name
+        audio_path = AUDIO_DIR / audio_name
+
+        make_audio_preview(
+            notes,
+            float(tempo),
+            instrument_name,
+            audio_path,
+        )
+
+        label = (
+            f"{datetime.now().strftime('%H:%M:%S')} · "
+            f"{instrument_name} · {len(notes)} notes"
+        )
+
+        history_items = list(history_items or [])
+        history_items.insert(0, {
+            "label": label,
+            "midi": midi_path,
+            "audio": str(audio_path),
+            "status": (
+                f"Generated {len(notes)} notes using "
+                f"{instrument_name} at {int(tempo)} BPM."
+            ),
+        })
+
+        # Keep the most recent 10 generations for this session.
+        history_items = history_items[:10]
+        history_choices = [item["label"] for item in history_items]
+
+        return (
+            midi_path,
+            str(audio_path),
+            (
+                f"Composition ready.\n"
+                f"Instrument: {instrument_name}\n"
+                f"Notes: {len(notes)}\n"
+                f"Tempo: {int(tempo)} BPM"
+            ),
+            history_items,
+            gr.update(choices=history_choices, value=label),
+        )
+
+    except Exception as exc:
+        raise gr.Error(f"Music generation failed: {exc}") from exc
+
+
+def load_history(label, history_items):
+    for item in history_items or []:
+        if item["label"] == label:
+            return item["midi"], item["audio"], item["status"]
+
+    return (
+        None,
+        None,
+        "Choose a composition from your generation history.",
+    )
 
 
 # ==========================================
@@ -571,11 +536,10 @@ with gr.Blocks(
     theme=gr.themes.Base(
         primary_hue="cyan",
         secondary_hue="blue",
-        neutral_hue="slate"
+        neutral_hue="slate",
     ),
-    css=MIDNIGHT_CSS
+    css=MIDNIGHT_CSS,
 ) as demo:
-
     gr.HTML("""
     <header id="hathor-header">
         <div id="hathor-brand">♫ HATHOR AI · MUSIC STUDIO</div>
@@ -594,14 +558,10 @@ with gr.Blocks(
     history = gr.State([])
 
     with gr.Row(equal_height=False):
-
         with gr.Column(scale=6):
             with gr.Group(elem_classes=["hathor-panel"]):
-
                 gr.HTML("""
-                <div class="hathor-heading">
-                    ✦ Create your melody
-                </div>
+                <div class="hathor-heading">✦ Create your melody</div>
                 <div class="hathor-description">
                     Shape your composition, select a playback instrument,
                     and generate a new musical idea.
@@ -614,7 +574,7 @@ with gr.Blocks(
                     value=120,
                     step=8,
                     label="Melody length",
-                    info="Number of generated note events"
+                    info="Number of generated note events",
                 )
 
                 temperature = gr.Slider(
@@ -623,10 +583,7 @@ with gr.Blocks(
                     value=0.9,
                     step=0.1,
                     label="Creativity",
-                    info=(
-                        "Lower values are more predictable; "
-                        "higher values are more varied"
-                    )
+                    info="Lower values are more predictable; higher values are more varied",
                 )
 
                 tempo = gr.Slider(
@@ -635,7 +592,7 @@ with gr.Blocks(
                     value=110,
                     step=5,
                     label="Tempo (BPM)",
-                    info="Playback speed for your composition"
+                    info="Playback speed for your composition",
                 )
 
                 instrument = gr.Dropdown(
@@ -649,26 +606,23 @@ with gr.Blocks(
                         "Trumpet",
                         "Soprano Sax",
                         "Church Organ",
-                        "Synth Strings 1"
+                        "Synth Strings 1",
                     ],
                     value="Acoustic Grand Piano",
                     label="Playback instrument",
-                    info="Choose the sound for your melody."
+                    info="Choose the sound for your melody.",
                 )
 
                 generate = gr.Button(
                     "✦  Generate Music",
                     variant="primary",
-                    elem_id="generate-btn"
+                    elem_id="generate-btn",
                 )
 
         with gr.Column(scale=5):
             with gr.Group(elem_classes=["hathor-panel"]):
-
                 gr.HTML("""
-                <div class="hathor-heading">
-                    Your composition
-                </div>
+                <div class="hathor-heading">Your composition</div>
                 <div class="hathor-description">
                     Listen to your preview directly here or download
                     the MIDI file for use in a compatible music app.
@@ -679,13 +633,13 @@ with gr.Blocks(
                     label="Listen to your composition",
                     type="filepath",
                     interactive=False,
-                    elem_id="audio-preview"
+                    elem_id="audio-preview",
                 )
 
                 result = gr.File(
                     label="Download MIDI composition",
                     elem_id="result-file",
-                    interactive=False
+                    interactive=False,
                 )
 
                 status = gr.Textbox(
@@ -693,7 +647,7 @@ with gr.Blocks(
                     value="Ready to create your first melody.",
                     lines=4,
                     interactive=False,
-                    elem_id="status-box"
+                    elem_id="status-box",
                 )
 
                 gr.Markdown(
@@ -703,9 +657,7 @@ with gr.Blocks(
 
     with gr.Group(elem_classes=["hathor-panel"]):
         gr.HTML("""
-        <div class="hathor-heading">
-            ◷ Generation history
-        </div>
+        <div class="hathor-heading">◷ Generation history</div>
         <div class="hathor-description">
             Reopen a composition created during this session.
             Select a previous entry to restore its audio and MIDI file.
@@ -716,7 +668,7 @@ with gr.Blocks(
             choices=[],
             label="Previous compositions",
             interactive=True,
-            info="Choose a composition from this session."
+            info="Choose a composition from this session.",
         )
 
     gr.HTML("""
@@ -728,33 +680,14 @@ with gr.Blocks(
 
     generate.click(
         fn=generate_music,
-        inputs=[
-            length,
-            temperature,
-            tempo,
-            instrument,
-            history
-        ],
-        outputs=[
-            result,
-            audio_result,
-            status,
-            history,
-            history_picker
-        ]
+        inputs=[length, temperature, tempo, instrument, history],
+        outputs=[result, audio_result, status, history, history_picker],
     )
 
     history_picker.change(
         fn=load_history,
-        inputs=[
-            history_picker,
-            history
-        ],
-        outputs=[
-            result,
-            audio_result,
-            status
-        ]
+        inputs=[history_picker, history],
+        outputs=[result, audio_result, status],
     )
 
 
@@ -765,6 +698,5 @@ with gr.Blocks(
 if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
-        server_port=int(os.environ.get("PORT", "10000"))
-        )
-                
+        server_port=int(os.environ.get("PORT", "10000")),
+    )
