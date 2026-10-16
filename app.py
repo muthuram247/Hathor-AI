@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -298,6 +297,37 @@ def make_audio_preview(notes, tempo, instrument_name, audio_path):
 # ==========================================
 # GENERATE MUSIC + UPDATE SESSION HISTORY
 # ==========================================
+
+def clean_notes(notes, tempo):
+    """Improve pitch range and timing before playback and export."""
+
+    beat = 60.0 / float(tempo)
+    grid = beat / 2.0  # Eighth-note grid
+    cleaned = []
+
+    current_time = 0.0
+
+    for pitch, duration_idx in notes:
+        pitch = int(pitch)
+        duration_idx = int(duration_idx)
+
+        if not 0 <= duration_idx < len(DURATION_BINS):
+            continue
+
+        # Raise the melody one octave, avoiding extreme high notes.
+        pitch = int(np.clip(pitch + 12, 48, 96))
+
+        # Treat learned duration bins as beats.
+        duration_beats = float(DURATION_BINS[duration_idx])
+        duration_beats = float(np.clip(duration_beats, 0.25, 1.0))
+
+        # Snap note starts to a regular rhythmic grid.
+        current_time = round(current_time / grid) * grid
+
+        cleaned.append((pitch, duration_idx))
+        current_time += duration_beats * beat
+
+    return cleaned
 
 def generate_music(
     length,
