@@ -1,0 +1,7 @@
+{
+  "sequence_length": 64,
+  "vocabulary_size": 519,
+  "train_sequences": 1579228,
+  "validation_sequences": 160873,
+  "usable_songs": 1276
+}
